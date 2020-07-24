@@ -9,7 +9,7 @@
 # general configuration
 backend=pytorch # chainer or pytorch
 stage=0         # start from 0 if you need to start from data preparation
-stop_stage=100
+stop_stage=2
 ngpu=1          # number of gpus ("0" uses cpu, otherwise use gpu)
 nj=4            # number of parallel jobs for decoding
 debugmode=1
@@ -47,12 +47,13 @@ tgt_case=lc.rm
 # Set this to somewhere where you want to put your data, or where
 # someone else has already put it.  You'll want to change this
 # if you're not on the CLSP grid.
-sfisher_speech=/export/corpora/LDC/LDC2010S01
-sfisher_transcripts=/export/corpora/LDC/LDC2010T04
+corpora_root=/data/LDC
+sfisher_speech=${corpora_root}/LDC2010S01
+sfisher_transcripts=${corpora_root}/LDC2010T04
 split=local/splits/split_fisher
 
-callhome_speech=/export/corpora/LDC/LDC96S35
-callhome_transcripts=/export/corpora/LDC/LDC96T17
+callhome_speech=${corpora_root}/LDC96S35
+callhome_transcripts=${corpora_root}/LDC96T17
 split_callhome=local/splits/split_callhome
 
 # bpemode (unigram or bpe)
@@ -99,14 +100,20 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
     echo "stage 1: Feature Generation"
-    fbankdir=fbank
+    # fbankdir=fbank
+    pcmdir=pcm
     # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
     for x in fisher_dev fisher_dev2 fisher_test callhome_devtest callhome_evltest; do
         # upsample audio from 8k to 16k to make a recipe consistent with others
         sed -i.bak -e "s/$/ sox -R -t wav - -t wav - rate 16000 dither | /" data/${x}/wav.scp
 
-        steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
-            data/${x} exp/make_fbank/${x} ${fbankdir}
+        # steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
+        #     data/${x} exp/make_fbank/${x} ${fbankdir}
+        # extract-segments scp,p:data/${x}/wav.scp data/${x}/segments \
+        #     ark,scp:data/${x}/wav_segments.ark,data/${x}/wav_segments.scp
+        utils/data/get_utt2num_frames.sh data/${x} 
+        dump_pcm.sh --nj 32 --cmd ${train_cmd} --write-utt2num-frames false --filetype sound \
+            data/${x} exp/dump_pcm/${x} ${pcmdir}
     done
 
     # speed-perturbed. data/${train_set_ori} is the orignal and data/${train_set} is the augmented
@@ -116,8 +123,12 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     utils/perturb_data_dir_speed.sh 1.1 data/fisher_train data/temp3
     utils/combine_data.sh --extra-files utt2uniq data/train_sp data/temp1 data/temp2 data/temp3
     rm -r data/temp1 data/temp2 data/temp3
-    steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
-        data/train_sp exp/make_fbank/train_sp ${fbankdir}
+    # steps/make_fbank_pitch.sh --cmd "$train_cmd" --nj 32 --write_utt2num_frames true \
+    #     data/train_sp exp/make_fbank/train_sp ${fbankdir}
+    utils/data/get_utt2num_frames.sh data/train_sp 
+    dump_pcm.sh --nj 32 --cmd ${train_cmd} --write-utt2num-frames false --filetype sound \
+        data/train_sp exp/dump_pcm/train_sp ${pcmdir}
+
     utils/fix_data_dir.sh data/train_sp
     utils/validate_data_dir.sh data/train_sp
 
@@ -170,28 +181,31 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     done
 
     # compute global CMVN
-    compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
+    # compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
 
     # dump features for training
-    if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_tr_dir}/storage ]; then
-      utils/create_split_dir.pl \
-          /export/b{14,15,16,17}/${USER}/espnet-data/egs/fisher_callhome_spanish/st1/dump/${train_set}/delta${do_delta}/storage \
-          ${feat_tr_dir}/storage
-    fi
-    if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_dt_dir}/storage ]; then
-      utils/create_split_dir.pl \
-          /export/b{14,15,16,17}/${USER}/espnet-data/egs/fisher_callhome_spanish/st1/dump/${train_dev}/delta${do_delta}/storage \
-          ${feat_dt_dir}/storage
-    fi
-    dump.sh --cmd "$train_cmd" --nj 80 --do_delta $do_delta \
-        data/${train_set}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/${train_set} ${feat_tr_dir}
-    dump.sh --cmd "$train_cmd" --nj 32 --do_delta $do_delta \
-        data/${train_dev}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/${train_dev} ${feat_dt_dir}
+    # if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_tr_dir}/storage ]; then
+    #   utils/create_split_dir.pl \
+    #       /export/b{14,15,16,17}/${USER}/espnet-data/egs/fisher_callhome_spanish/st1/dump/${train_set}/delta${do_delta}/storage \
+    #       ${feat_tr_dir}/storage
+    # fi
+    # if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_dt_dir}/storage ]; then
+    #   utils/create_split_dir.pl \
+    #       /export/b{14,15,16,17}/${USER}/espnet-data/egs/fisher_callhome_spanish/st1/dump/${train_dev}/delta${do_delta}/storage \
+    #       ${feat_dt_dir}/storage
+    # fi
+    # dump.sh --cmd "$train_cmd" --nj 80 --do_delta $do_delta \
+    #     data/${train_set}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/${train_set} ${feat_tr_dir}
+    cp data/${train_set}/feats.scp ${feat_tr_dir}
+    # dump.sh --cmd "$train_cmd" --nj 32 --do_delta $do_delta \
+    #     data/${train_dev}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/${train_dev} ${feat_dt_dir}
+    cp data/${train_dev}/feats.scp ${feat_dt_dir}
     for ttask in ${trans_set}; do
         feat_trans_dir=${dumpdir}/${ttask}/delta${do_delta}; mkdir -p ${feat_trans_dir}
-        dump.sh --cmd "$train_cmd" --nj 32 --do_delta $do_delta \
-            data/${ttask}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/trans/${ttask} \
-            ${feat_trans_dir}
+        # dump.sh --cmd "$train_cmd" --nj 32 --do_delta $do_delta \
+        #     data/${ttask}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/trans/${ttask} \
+        #     ${feat_trans_dir}
+        cp data/${ttask}/feats.scp ${feat_trans_dir}
     done
 fi
 
@@ -217,21 +231,32 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     wc -l ${dict}
 
     echo "make json files"
-    data2json.sh --nj 16 --feat ${feat_tr_dir}/feats.scp --text data/${train_set}/text.${tgt_case} --bpecode ${bpemodel}.model --lang en \
+    data2json.sh --nj 16 --feat ${feat_tr_dir}/feats.scp --filetype sound \
+        --text data/${train_set}/text.${tgt_case} --bpecode ${bpemodel}.model --lang en \
         data/${train_set} ${dict} > ${feat_tr_dir}/data_${bpemode}${nbpe}.${src_case}_${tgt_case}.json
-    data2json.sh --feat ${feat_dt_dir}/feats.scp --text data/${train_dev}/text.${tgt_case} --bpecode ${bpemodel}.model --lang en \
+    data2json.sh --feat ${feat_dt_dir}/feats.scp --filetype sound \
+        --text data/${train_dev}/text.${tgt_case} --bpecode ${bpemodel}.model --lang en \
         data/${train_dev} ${dict} > ${feat_dt_dir}/data_${bpemode}${nbpe}.${src_case}_${tgt_case}.json
+    # data2json.sh --nj 16 --feat ${feat_tr_dir}/feats.scp --text data/${train_set}/text.${tgt_case} --bpecode ${bpemodel}.model --lang en \
+    #     data/${train_set} ${dict} > ${feat_tr_dir}/data_${bpemode}${nbpe}.${src_case}_${tgt_case}.json
+    # data2json.sh --feat ${feat_dt_dir}/feats.scp --text data/${train_dev}/text.${tgt_case} --bpecode ${bpemodel}.model --lang en \
+    #     data/${train_dev} ${dict} > ${feat_dt_dir}/data_${bpemode}${nbpe}.${src_case}_${tgt_case}.json
     for ttask in ${trans_set}; do
         feat_trans_dir=${dumpdir}/${ttask}/delta${do_delta}
-        data2json.sh --feat ${feat_trans_dir}/feats.scp --text data/${ttask}/text.${tgt_case} --bpecode ${bpemodel}.model --lang en \
+        data2json.sh --feat ${feat_trans_dir}/feats.scp --filetype sound \
+            --text data/${ttask}/text.${tgt_case} --bpecode ${bpemodel}.model --lang en \
             data/${ttask} ${dict} > ${feat_trans_dir}/data_${bpemode}${nbpe}.${src_case}_${tgt_case}.json
+        # data2json.sh --feat ${feat_trans_dir}/feats.scp --text data/${ttask}/text.${tgt_case} --bpecode ${bpemodel}.model --lang en \
+        #     data/${ttask} ${dict} > ${feat_trans_dir}/data_${bpemode}${nbpe}.${src_case}_${tgt_case}.json
     done
 
     # Fisher has 4 references per utterance
     for ttask in fisher_dev.en fisher_dev2.en fisher_test.en; do
         feat_trans_dir=${dumpdir}/${ttask}/delta${do_delta}
         for no in 1 2 3; do
-            data2json.sh --text data/${ttask}/text.${tgt_case}.${no} --feat ${feat_trans_dir}/feats.scp --bpecode ${bpemodel}.model --lang en \
+            data2json.sh --text data/${ttask}/text.${tgt_case}.${no} \
+                --feat ${feat_trans_dir}/feats.scp --filetype sound \
+                --bpecode ${bpemodel}.model --lang en \
                 data/${ttask} ${dict} > ${feat_trans_dir}/data_${bpemode}${nbpe}_${no}.${tgt_case}.json
         done
     done
